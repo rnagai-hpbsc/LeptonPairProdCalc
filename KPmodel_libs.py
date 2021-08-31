@@ -36,20 +36,30 @@ class XsecCalculator:
     def lim_rho(self, y, E_lep): 
         rho_max = (1.-6.*self.m_lep**2./E_lep**2./(1.-y))*np.sqrt(1.-4.*self.m_ele/E_lep/y)
         return rho_max
+
+    def lim_rho_EyParams(self, Ey, E_lep):
+        rho_max = (1.-6.*self.m_lep**2/E_lep/(E_lep-Ey))*np.sqrt(1.-4.*self.m_ele/Ey)
+        return rho_max
     
     def lim_y(self, E_lep): 
         ymin = 4. * self.m_ele / E_lep
         ymax = 1. - 0.75 * self.m_lep / E_lep * self.sqrtE * self.getZ3() 
         return ymin, ymax
 
+    def lim_Ey(self, E_lep): 
+        Eymin = 4. * self.m_ele
+        Eymax = E_lep - 0.75 * self.m_lep * self.sqrtE * self.getZ3()
+        return Eymin, Eymax
+
     def getLog1Px(self, x): 
         func = 0
-        if self.n < 0: 
+        N = self.n
+        if N < 0: 
             func = np.log(1.+x) 
-        elif self.n==0: 
+        elif N==0: 
             func = np.log1p(x)
-        elif self.n > 0: 
-            for i in range(self.n+1):
+        elif N > 0: 
+            for i in range(N+1):
                 func += (-1)**i * x**(i+1) / (i+1.)
         return func 
 
@@ -57,10 +67,10 @@ class XsecCalculator:
         return y**2 / (2.*(1.-y))
     
     def getXi(self, rho, y): 
-        return 0.5 * self.getMassRatio()**2 * self.getBeta(y) * (1.-rho**2)
+        return 0.5*self.getMassRatio()**2 * self.getBeta(y) * (1-rho**2)
     
     def getYe(self, rho, y): 
-        return (5. - rho**2 + 4.*self.getBeta(y)*(1.+rho**2) ) / (2.*(1.+3.*self.getBeta(y))*(np.log(3)+self.getLog1Px(1./3./self.getXi(rho,y))) - rho**2 - 2.*self.getBeta(y)*(2.-rho**2)) 
+        return (5. - rho**2 + 4.*self.getBeta(y)*(1.+rho**2) ) / (2.*(1.+3.*self.getBeta(y))*np.log(3.+1./self.getXi(rho,y)) - rho**2 - 2.*self.getBeta(y)*(2.-rho**2) ) 
     
     def getYl(self, rho, y): 
         return (4. + rho**2 + 3.*self.getBeta(y)*(1.+rho**2) ) / ((1.+rho**2)*(1.5+2.*self.getBeta(y))*np.log(3+self.getXi(rho,y))+1.-1.5*rho**2)
@@ -68,10 +78,10 @@ class XsecCalculator:
     def getLe(self, rho, y, E_lep): 
         return np.log(self.R/self.getZ3()*np.sqrt((1.+self.getXi(rho,y))*(1.+self.getYe(rho,y))) \
                 / (1.+2.*self.m_ele*self.sqrtE/self.getZ3()*(1.+self.getXi(rho,y))*(1.+self.getYe(rho,y)) / (E_lep*y*(1.-rho**2)) )) \
-                - 0.5*self.getLog1Px((1.5*self.getZ3()/self.getMassRatio())**2 * (1.+self.getXi(rho,y)) * (1.+self.getYe(rho,y)))
+                - 0.5*np.log1p(9./4 * self.getZ3()**2 / self.getMassRatio()**2 * (1.+self.getXi(rho,y)) * (1.+self.getYe(rho,y)))
 
     def getPhie(self, rho, y, E_lep): 
-        return (((2.+rho**2)*(1.+self.getBeta(y))+self.getXi(rho,y)*(3.+rho**2))*self.getLog1Px(1./self.getXi(rho,y)) + (1.-rho**2-self.getBeta(y)) / (1.+self.getXi(rho,y)) - (3.+rho**2)) \
+        return (((2.+rho**2)*(1.+self.getBeta(y))+self.getXi(rho,y)*(3.+rho**2))*np.log1p(1./self.getXi(rho,y)) + (1.-rho**2-self.getBeta(y)) / (1.+self.getXi(rho,y)) - (3.+rho**2)) \
                 *self.getLe(rho,y,E_lep)
 
     def getLl(self, rho, y, E_lep):
@@ -82,15 +92,15 @@ class XsecCalculator:
                 + self.getXi(rho,y) * (1.-rho**2-self.getBeta(y))/(1.+self.getXi(rho,y)) + (1.+2.*self.getBeta(y)) * (1.-rho**2)) * self.getLl(rho,y,E_lep)
 
     def getDSigmaDyDrho(self, rho, y, E_lep): 
-        return self.alpha**4 * (2./3.) / np.pi * self.Z*(self.Z+1.) * (self.lambda_e*self.M_E/self.m_ele)**2 * (1.-y)/y * (self.getPhie(rho,y,E_lep) + self.getPhil(rho,y,E_lep)/self.getMassRatio()**2)
+        return self.alpha**4 * (2./3.) / np.pi * self.Z*(self.Z+1.) * (self.lambda_e*self.M_E/self.m_ele)**2 * (1.-y)/y * (self.getPhie(rho,y,E_lep) + self.m_ele**2 / self.m_lep**2 * self.getPhil(rho,y,E_lep))
 
     def getDSigmaDy(self, y, E_lep, method): 
         rho_max = self.lim_rho(y,E_lep)
         if method == 'quad': 
-            print("Gauss Quadrature Integration will be performed.")
+            #print("Gauss Quadrature Integration will be performed.")
             return scipy.integrate.quad(self.getDSigmaDyDrho, -rho_max, rho_max, args=(y,E_lep))[0]
         elif method == 'romberg':
-            print("Romberg Integration will be performed.")
+            #print("Romberg Integration will be performed.")
             return scipy.integrate.romberg(self.getDSigmaDyDrho, -rho_max, rho_max, args=(y,E_lep))
         else: 
             print("Invalid Integration method. Return 0.")
@@ -99,10 +109,10 @@ class XsecCalculator:
     def getSigma(self, E_lep, method): 
         ymin, ymax = self.lim_y(E_lep)
         if method == 'quad':
-            print("Gauss Quadrature Integration will be performed.")
+            #print("Gauss Quadrature Integration will be performed.")
             return scipy.integrate.quad(self.getDSigmaDy, ymin, ymax, args=(E_lep, method))[0]
         elif method == 'romberg': 
-            print("Romberg Integration will be performed.")
+            #print("Romberg Integration will be performed.")
             return scipy.integrate.romberg(self.getDSigmaDy, ymin, ymax, args=(E_lep, method))
         else: 
             print("Invalid Integration method. Return 0.")
@@ -114,10 +124,10 @@ class XsecCalculator:
     def getEnergyLoss(self, E_lep, method): 
         ymin, ymax = self.lim_y(E_lep)
         if method == 'quad': 
-            print("Gauss Quadrature Integration will be performed.")
+            #print("Gauss Quadrature Integration will be performed.")
             return scipy.integrate.quad(self.getyDSigmaDy, ymin, ymax, args=(E_lep, method))[0]
         elif method == 'romberg':
-            print("Romberg Integration will be performed.")
+            #print("Romberg Integration will be performed.")
             return scipy.integrate.romberg(self.getyDSigmaDy, ymin, ymax, args=(E_lep, mehtod))
         else:
             print("Invalid Integration method. Return 0.")
