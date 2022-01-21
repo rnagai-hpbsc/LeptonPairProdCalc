@@ -14,7 +14,7 @@ class XsecCalculator:
     R = 189. # Radiation Constant 
     alpha = 1./137. # Fine Structure Constant 
     lambda_e = 3.8616e-11 #cm : reduced compton wavelength of the electron 
-    quadlimit = 1000
+    quadlimit = 100
 
     def __init__(self, m_lep=M_MU, m_ele=M_E, material='rock', n=1): 
         self.m_lep = m_lep
@@ -23,6 +23,10 @@ class XsecCalculator:
         self.accrho = False
         self.rhoSafetyFactor = 0
         self.ySafetyFactor = 0
+        self.tol = 1.48e-10
+        self.rtol = 1.48e-10
+        self.divmax = 10
+        self.RombergDebug = False
         if material=='rock':
             self.Z = 11.
             self.A = 22. 
@@ -30,6 +34,9 @@ class XsecCalculator:
             print('Undefined material seting... We set Z=0, A=0.')
             self.Z = 0.
             self.A = 0.
+
+    def setRombergDebug(self):
+        self.RombergDebug = True
 
     def setAccRho(self): 
         self.accrho = True
@@ -39,6 +46,24 @@ class XsecCalculator:
 
     def setySafetyFactor(self, value):
         self.ySafetyFactor = float(value)
+
+    def setRombergTol(self, value):
+        self.tol = value
+
+    def getRombergTol(self):
+        return self.tol
+
+    def setRombergRtol(self, value):
+        self.rtol = value
+
+    def getRombergRtol(self):
+        return self.rtol
+
+    def setRombergDivmax(self, value):
+        self.divmax = value
+
+    def getRombergDivmax(self):
+        return self.divmax
 
     def getZ3(self):
         return self.Z**(1./3.)
@@ -115,44 +140,61 @@ class XsecCalculator:
         return (((1.+rho**2)*(1.+1.5*self.getBeta(y)) - (1.+2.*self.getBeta(y)) * (1.-rho**2)/self.getXi(rho,y)) * np.log1p(self.getXi(rho,y)) \
                 + self.getXi(rho,y) * (1.-rho**2-self.getBeta(y))/(1.+self.getXi(rho,y)) + (1.+2.*self.getBeta(y)) * (1.-rho**2)) * self.getLl(rho,y,E_lep)
 
-    def getDSigmaDyDrho(self, rho, y, E_lep): 
-        return self.alpha**4 / 1.5 / np.pi * self.Z*(self.Z+1.) * (self.lambda_e*self.M_E/self.m_ele)**2 * (1.-y)/y * (self.getPhie(rho,y,E_lep) + self.m_ele**2 / self.m_lep**2 * self.getPhil(rho,y,E_lep))
+    def getFactor(self, y): 
+        return self.alpha**4 / 1.5 / np.pi * self.Z * (self.Z+1) * (self.lambda_e*self.M_E/self.m_ele)**2 * (1-y)/y
 
-    def getDSigmaDy(self, y, E_lep, method): 
+    def getAsymTerm(self, rho, y, E_lep):
+        return self.getPhie(rho,y,E_lep) + (self.m_ele/self.m_lep)**2 * self.getPhil(rho,y,E_lep)
+
+    def getIntAsymTerm(self, y, E_lep, method='romberg'):
+        rho_max = self.lim_rho(y,E_lep)
+        if method == 'quad':
+            return quad(self.getAsymTerm, -rho_max, rho_max, args=(y,E_lep),limit=self.quadlimit)[0]
+        elif method == 'romberg':
+            return romberg(self.getAsymTerm, -rho_max, rho_max, args=(y,E_lep),tol=self.tol,divmax=self.divmax,show=self.RombergDebug)
+        else: 
+            print('Invalid Integration method. Return 0.')
+            return 0
+
+    def getDSigmaDyDrho(self, rho, y, E_lep): 
+        return self.alpha**4 / 1.5 / np.pi * self.Z*(self.Z+1.) * (self.lambda_e*self.M_E/self.m_ele)**2 * (1.-y)/y * self.getAsymTerm(rho,y,E_lep)
+
+    def getDSigmaDy(self, y, E_lep, method='romberg'):
+        return self.getFactor(y) * self.getIntAsymTerm(y, E_lep, method)
+
+    def getDSigmaDy_OLD(self, y, E_lep, method='romberg'): 
         rho_max = self.lim_rho(y,E_lep)
         rhoBound = rho_max - self.rhoSafetyFactor
-        #print(rhoBound)
+        print(rhoBound)
         if method == 'quad': 
-            #print("Gauss Quadrature Integration will be performed.")
             return quad(self.getDSigmaDyDrho, -rhoBound, rhoBound, args=(y,E_lep), limit=self.quadlimit)[0]
         elif method == 'romberg':
-            #print("Romberg Integration will be performed.")
-            dsigmady = romberg(self.getDSigmaDyDrho, -rhoBound, rhoBound, args=(y,E_lep))
-            return dsigmady
+            return romberg(self.getDSigmaDyDrho, -rhoBound, rhoBound, args=(y,E_lep),tol=self.tol,divmax=self.divmax)
         else: 
             print("Invalid Integration method. Return 0.")
             return 0
 
-    def getSigma(self, E_lep, method): 
+    def getDSigmaDz(self, y, E_lep, method='romberg'):
+        return getDSigmaDy(self, 1-y, E_lep, method)
+
+    def getSigma(self, E_lep, method='romberg'): 
         ymin, ymax = self.lim_y(E_lep)
         yminBound = ymin + self.ySafetyFactor/E_lep
         ymaxBound = ymax #- self.ySafetyFactor
         if method == 'quad':
-            #print("Gauss Quadrature Integration will be performed.")
             return quad(self.getDSigmaDy, yminBound, ymaxBound, args=(E_lep, method), limit=self.quadlimit)[0]
         elif method == 'romberg': 
-            #print("Romberg Integration will be performed.")
-            return romberg(self.getDSigmaDy, yminBound, ymaxBound, args=(E_lep, method))
+            return romberg(self.getDSigmaDy, yminBound, ymaxBound, args=(E_lep, method),tol=self.tol,divmax=self.divmax)
         else: 
             print("Invalid Integration method. Return 0.")
             return 0
 
-    def getyDSigmaDy(self, y, E_lep, method): 
+    def getyDSigmaDy(self, y, E_lep, method='romberg'): 
         ydsdy =  y*self.getDSigmaDy(y, E_lep, method)
         #print(f'{y}, {self.getDSigmaDy(y, E_lep, method)}, {ydsdy}')
         return ydsdy
 
-    def getEnergyLoss(self, E_lep, method): 
+    def getEnergyLoss(self, E_lep, method='romberg'): 
         ymin, ymax = self.lim_y(E_lep)
         yminBound = ymin + self.ySafetyFactor/E_lep
         ymaxBound = ymax #- self.ySafetyFactor
@@ -161,16 +203,16 @@ class XsecCalculator:
             return self.NA/self.A * quad(self.getyDSigmaDy, yminBound, ymaxBound, args=(E_lep, method))[0]
         elif method == 'romberg':
             #print("Romberg Integration will be performed.")
-            energyloss = self.NA/self.A * romberg(self.getyDSigmaDy, yminBound, ymaxBound, args=(E_lep, method))
+            energyloss = self.NA/self.A * romberg(self.getyDSigmaDy, yminBound, ymaxBound, args=(E_lep, method),tol=self.tol,divmax=self.divmax)
             return energyloss
         else:
             print("Invalid Integration method. Return 0.")
             return 0
 
-    def getSigmaArray(self, logE_leps, method): 
+    def getSigmaArray(self, logE_leps, method='romberg'): 
         return np.array([self.getSigma(10**logE, method) for logE in logE_leps])
     
-    def getEnergyLossArray(self, logE_leps, method): 
+    def getEnergyLossArray(self, logE_leps, method='romberg'): 
         return np.array([self.getEnergyLoss(10**logE, method) for logE in logE_leps])
 
 
