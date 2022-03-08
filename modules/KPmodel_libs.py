@@ -13,8 +13,7 @@ class XsecCalculator:
     NA = 6.02214e23 # Avogadro Constant 
     R = 189. # Radiation Constant 
     alpha = 1./137. # Fine Structure Constant 
-    lambda_e = 3.8616e-11 #cm : reduced compton wavelength of the electron 
-    quadlimit = 100
+    lambda_e = 2.42431023867e-12 / 2 / np.pi * 1e2 #3.8616e-11 #cm : reduced compton wavelength of the electron 
 
     def __init__(self, m_lep=M_MU, m_ele=M_E, material='rock', n=1): 
         self.m_lep = m_lep
@@ -27,6 +26,7 @@ class XsecCalculator:
         self.rtol = 1.48e-10
         self.divmax = 10
         self.RombergDebug = False
+        self.quadlimit = 100
         if material=='rock':
             self.Z = 11.
             self.A = 22. 
@@ -34,6 +34,12 @@ class XsecCalculator:
             print('Undefined material seting... We set Z=0, A=0.')
             self.Z = 0.
             self.A = 0.
+
+    def setMele(self, value):
+        self.m_ele = value
+
+    def setQuadlimit(self, value):
+        self.quadlimit = value
 
     def setRombergDebug(self):
         self.RombergDebug = True
@@ -113,6 +119,9 @@ class XsecCalculator:
     def getXi(self, rho, y): 
         return 0.5*self.getMassRatio()**2 * self.getBeta(y) * (1-rho**2)
     
+    def getGamma(self, rho, y, E_lep):
+        return self.R * 2 * self.m_ele * (1 + self.getXi(rho, y)) / E_lep / y / (1 - rho**2) / self.getZ3()
+
     def getYe(self, rho, y): 
         return (5. - rho**2 + 4.*self.getBeta(y)*(1.+rho**2) ) / (2.*(1.+3.*self.getBeta(y))*np.log(3.+1./self.getXi(rho,y)) - rho**2 - 2.*self.getBeta(y)*(2.-rho**2) ) 
     
@@ -121,7 +130,7 @@ class XsecCalculator:
 
     def getLe(self, rho, y, E_lep): 
         return np.log(self.R/self.getZ3()*np.sqrt((1.+self.getXi(rho,y))*(1.+self.getYe(rho,y))) \
-                / (1.+2.*self.m_ele*self.sqrtE/self.getZ3()*(1.+self.getXi(rho,y))*(1.+self.getYe(rho,y)) / (E_lep*y*(1.-rho**2)) )) \
+                / (1.+self.getGamma(rho,y,E_lep)*self.sqrtE*(1.+self.getYe(rho,y))) ) \
                 - 0.5*np.log1p(2.25 * self.getZ3()**2 / self.getMassRatio()**2 * (1.+self.getXi(rho,y)) * (1.+self.getYe(rho,y)))
     
     def getLeDiv(self, rho, y, E_lep):
@@ -134,14 +143,14 @@ class XsecCalculator:
                 *self.getLe(rho,y,E_lep)
 
     def getLl(self, rho, y, E_lep):
-        return np.log(self.R / self.getZ3()**2 / 1.5 * self.getMassRatio() / (1.+2.*self.m_ele*self.sqrtE*self.R/self.getZ3()*(1.+self.getXi(rho,y))*(1.+self.getYl(rho,y)) / (E_lep*y*(1.-rho**2))) )
+        return np.log(self.R / self.getZ3()**2 / 1.5 * self.getMassRatio() / (1.+self.getGamma(rho,y,E_lep)*self.sqrtE*(1.+self.getYl(rho,y)) ))
 
     def getPhil(self, rho, y, E_lep):
         return (((1.+rho**2)*(1.+1.5*self.getBeta(y)) - (1.+2.*self.getBeta(y)) * (1.-rho**2)/self.getXi(rho,y)) * np.log1p(self.getXi(rho,y)) \
                 + self.getXi(rho,y) * (1.-rho**2-self.getBeta(y))/(1.+self.getXi(rho,y)) + (1.+2.*self.getBeta(y)) * (1.-rho**2)) * self.getLl(rho,y,E_lep)
 
-    def getFactor(self, y): 
-        return self.alpha**4 / 1.5 / np.pi * self.Z * (self.Z+1) * (self.lambda_e*self.M_E/self.m_ele)**2 * (1-y)/y
+    def getFactor(self): 
+        return self.alpha**4 / 1.5 / np.pi * self.Z * (self.Z+1) * (self.lambda_e*self.M_E/self.m_ele)**2
 
     def getAsymTerm(self, rho, y, E_lep):
         return self.getPhie(rho,y,E_lep) + (self.m_ele/self.m_lep)**2 * self.getPhil(rho,y,E_lep)
@@ -157,10 +166,16 @@ class XsecCalculator:
             return 0
 
     def getDSigmaDyDrho(self, rho, y, E_lep): 
-        return self.alpha**4 / 1.5 / np.pi * self.Z*(self.Z+1.) * (self.lambda_e*self.M_E/self.m_ele)**2 * (1.-y)/y * self.getAsymTerm(rho,y,E_lep)
+        return self.getFactor() * self.getAsymTerm(rho,y,E_lep)
 
     def getDSigmaDy(self, y, E_lep, method='romberg'):
-        return self.getFactor(y) * self.getIntAsymTerm(y, E_lep, method)
+        return self.getFactor() * (1-y)/y * self.getIntAsymTerm(y, E_lep, method)
+
+    def getDSigmaDyNoFactor(self, y, E_lep, method='romberg'):
+        return (1-y)/y * self.getIntAsymTerm(y, E_lep, method)
+
+    def getDSigmaDyLogY(self, logy, E_lep, method='romberg'):
+        return self.getDSigmaDy(10**logy, E_lep, method)*np.log(10)*10**logy
 
     def getDSigmaDy_OLD(self, y, E_lep, method='romberg'): 
         rho_max = self.lim_rho(y,E_lep)
@@ -177,6 +192,16 @@ class XsecCalculator:
     def getDSigmaDz(self, y, E_lep, method='romberg'):
         return getDSigmaDy(self, 1-y, E_lep, method)
 
+    def getSigmaNoFactor(self, E_lep, method='romberg'): 
+        ymin, ymax = self.lim_y(E_lep)
+        if method == 'quad':
+            return quad(self.getDSigmaDyNoFactor, ymin, ymax, args=(E_lep, method), limit=self.quadlimit)[0]
+        elif method == 'romberg':
+            return romberg(self.getDSigmaDyNoFactor, ymin, ymax, args=(E_lep, method), tol=self.tol, divmax=self.divmax)
+        else: 
+            print("Invalid Integration method. Return 0.")
+            return 0
+
     def getSigma(self, E_lep, method='romberg'): 
         ymin, ymax = self.lim_y(E_lep)
         yminBound = ymin + self.ySafetyFactor/E_lep
@@ -185,6 +210,8 @@ class XsecCalculator:
             return quad(self.getDSigmaDy, yminBound, ymaxBound, args=(E_lep, method), limit=self.quadlimit)[0]
         elif method == 'romberg': 
             return romberg(self.getDSigmaDy, yminBound, ymaxBound, args=(E_lep, method),tol=self.tol,divmax=self.divmax)
+        elif method == 'logy_romberg':
+            return romberg(self.getDSigmaDyLogY, np.log10(yminBound), np.log10(ymaxBound), args=(E_lep,'romberg'),tol=self.tol, divmax=self.divmax)
         else: 
             print("Invalid Integration method. Return 0.")
             return 0
@@ -214,6 +241,7 @@ class XsecCalculator:
     
     def getEnergyLossArray(self, logE_leps, method='romberg'): 
         return np.array([self.getEnergyLoss(10**logE, method) for logE in logE_leps])
+
 
 
 """
